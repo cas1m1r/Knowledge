@@ -261,43 +261,146 @@
         zIndex: true,
       });
 
-      // Tooltip
-      renderer.on("enterNode", ({ node }) => {
-        const attrs = graph.getNodeAttributes(node);
-        labelEl.textContent = attrs.label || node;
-        metaEl.textContent = `${attrs.type || "node"} · degree ${attrs.degree ?? 0}`;
-        tooltip.style.display = "block";
-      });
+      // Tooltip<script>
+  console.log("Maxwell viewer script: starting");
 
-      renderer.on("leaveNode", () => {
-        tooltip.style.display = "none";
-      });
+  const Graph = graphology.Graph;
+  const Sigma = window.Sigma;
 
-      renderer.getMouseCaptor().on("mousemove", e => {
-        if (tooltip.style.display === "block") {
-          tooltip.style.left = e.x + 12 + "px";
-          tooltip.style.top = e.y + 12 + "px";
-        }
-      });
+  const container = document.getElementById("sigma-container");
+  const tooltip = document.getElementById("tooltip");
+  const labelEl = tooltip.querySelector(".label");
+  const metaEl = tooltip.querySelector(".meta");
+  const statusEl = document.getElementById("status-badge");
 
-      setStatus(`ready (${graph.order} nodes, ${edgeCount} edges)`);
-      console.log("Maxwell viewer: ready");
+  function setStatus(text) {
+    statusEl.textContent = "Status: " + text;
+  }
+
+  // NOTE: we use node.kind for our semantic type (capsule/concept/issue),
+  // NOT node.type, because Sigma reserves node.type for render programs.
+  function nodeColor(node) {
+    const kind = node.kind || "";
+    if (kind === "capsule") return "#ffcc66";
+    if (kind === "issue") return "#ff6b8b";
+    if (kind === "concept") return "#4cc3ff";
+    return "#888";
+  }
+
+  function nodeSize(node) {
+    const base = 2;
+    const d = node.degree || 0;
+    return base + Math.min(6, Math.sqrt(d) * 0.8);
+  }
+
+  async function loadGraph() {
+    console.log("Maxwell viewer: fetching graph.json…");
+    setStatus("fetching graph.json…");
+
+    const res = await fetch("graph.json");
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status + " when fetching graph.json");
     }
-
-    window.addEventListener("load", () => {
-      console.log("Maxwell viewer: window load event, calling loadGraph()");
-      setStatus("initializing…");
-
-      loadGraph()
-        .then(() => {
-          console.log("Maxwell viewer: loadGraph() completed");
-        })
-        .catch(err => {
-          console.error("Maxwell viewer error:", err);
-          setStatus("ERROR – see console");
-          alert("Viewer error – see browser console for details.");
-        });
+    const data = await res.json();
+    console.log("Maxwell viewer: graph.json loaded", {
+      nodes: data.nodes.length,
+      edges: data.edges.length,
     });
-  </script>
-</body>
-</html>
+    setStatus(`graph loaded (${data.nodes.length} nodes)`);
+
+    const graph = new Graph({ type: "undirected" });
+
+    // --- Add nodes with a simple spiral layout ---
+    const N = data.nodes.length || 1;
+    let i = 0;
+    data.nodes.forEach(n => {
+      if (graph.hasNode(n.id)) return;
+
+      const t = i / N;
+      const angle = 2 * Math.PI * t * 6;      // 6 turns
+      const radius = 10 * Math.sqrt(t + 0.01);
+
+      const kind = n.type || "";  // semantic type from graph.json
+
+      graph.addNode(n.id, {
+        label: n.label,
+        kind: kind,               // store as 'kind', not 'type'
+        degree: n.degree || 0,
+        size: nodeSize({ degree: n.degree || 0 }),
+        color: nodeColor({ kind }),
+        x: radius * Math.cos(angle),
+        y: radius * Math.sin(angle),
+        // important: DO NOT set node.type here (Sigma uses that internally)
+      });
+      i++;
+    });
+
+    console.log("Maxwell viewer: nodes added to graph:", graph.order);
+
+    // --- Add edges, de-duplicating by unordered pair ---
+    const seenPairs = new Set();
+    let edgeCount = 0;
+    data.edges.forEach(e => {
+      const src = e.source;
+      const tgt = e.target;
+      if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
+
+      const a = src < tgt ? src + "→" + tgt : tgt + "→" + src;
+      if (seenPairs.has(a)) return;
+      seenPairs.add(a);
+
+      graph.addEdge(src, tgt, {
+        type: "line",   // explicit default edge program
+      });
+      edgeCount++;
+    });
+
+    console.log("Maxwell viewer: edges added:", edgeCount);
+    setStatus(`rendering (${graph.order} nodes)`);
+
+    const renderer = new Sigma(graph, container, {
+      renderLabels: true,
+      defaultEdgeType: "line",
+      labelDensity: 0.8,
+      labelGridCellSize: 100,
+      zIndex: true,
+    });
+
+    // Tooltip
+    renderer.on("enterNode", ({ node }) => {
+      const attrs = graph.getNodeAttributes(node);
+      labelEl.textContent = attrs.label || node;
+      metaEl.textContent = `${attrs.kind || "node"} · degree ${attrs.degree ?? 0}`;
+      tooltip.style.display = "block";
+    });
+
+    renderer.on("leaveNode", () => {
+      tooltip.style.display = "none";
+    });
+
+    renderer.getMouseCaptor().on("mousemove", e => {
+      if (tooltip.style.display === "block") {
+        tooltip.style.left = e.x + 12 + "px";
+        tooltip.style.top = e.y + 12 + "px";
+      }
+    });
+
+    setStatus(`ready (${graph.order} nodes, ${edgeCount} edges)`);
+    console.log("Maxwell viewer: ready");
+  }
+
+  window.addEventListener("load", () => {
+    console.log("Maxwell viewer: window load event, calling loadGraph()");
+    setStatus("initializing…");
+
+    loadGraph()
+      .then(() => {
+        console.log("Maxwell viewer: loadGraph() completed");
+      })
+      .catch(err => {
+        console.error("Maxwell viewer error:", err);
+        setStatus("ERROR – see console");
+        alert("Viewer error – see browser console for details.");
+      });
+  });
+</script>
