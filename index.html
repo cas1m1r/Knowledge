@@ -116,6 +116,19 @@
       color: var(--text-muted);
       z-index: 15;
     }
+
+    #status-badge {
+      position: fixed;
+      top: 0.6rem;
+      right: 0.8rem;
+      padding: 0.35rem 0.6rem;
+      border-radius: 999px;
+      background: rgba(5, 7, 10, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      z-index: 15;
+    }
   </style>
 </head>
 <body>
@@ -132,3 +145,159 @@
         <span class="legend-dot" style="background:#ffcc66;"></span> Capsule
       </span>
       <span class="legend-item">
+        <span class="legend-dot" style="background:#ff6b8b;"></span> Issue
+      </span>
+    </div>
+  </header>
+
+  <div id="sigma-container"></div>
+
+  <div id="tooltip">
+    <div class="label"></div>
+    <div class="meta"></div>
+  </div>
+
+  <div id="footer">
+    Scroll / pinch to zoom · drag to pan · hover nodes for details
+  </div>
+
+  <div id="status-badge">Status: booting…</div>
+
+  <script>
+    console.log("Maxwell viewer script: starting");
+
+    const Graph = graphology.Graph;
+    const container = document.getElementById("sigma-container");
+    const tooltip = document.getElementById("tooltip");
+    const labelEl = tooltip.querySelector(".label");
+    const metaEl = tooltip.querySelector(".meta");
+    const statusEl = document.getElementById("status-badge");
+
+    function setStatus(text) {
+      statusEl.textContent = "Status: " + text;
+    }
+
+    function nodeColor(node) {
+      const type = node.type || "";
+      if (type === "capsule") return "#ffcc66";
+      if (type === "issue") return "#ff6b8b";
+      if (type === "concept") return "#4cc3ff";
+      return "#888";
+    }
+
+    function nodeSize(node) {
+      const base = 2;
+      const d = node.degree || 0;
+      return base + Math.min(6, Math.sqrt(d) * 0.8);
+    }
+
+    async function loadGraph() {
+      console.log("Maxwell viewer: fetching graph.json…");
+      setStatus("fetching graph.json…");
+
+      const res = await fetch("graph.json");
+      if (!res.ok) {
+        throw new Error("HTTP " + res.status + " when fetching graph.json");
+      }
+      const data = await res.json();
+      console.log("Maxwell viewer: graph.json loaded", {
+        nodes: data.nodes.length,
+        edges: data.edges.length,
+      });
+      setStatus(`graph loaded (${data.nodes.length} nodes)`);
+
+      const graph = new Graph({ type: "undirected" });
+
+      // --- Add nodes with a simple spiral layout ---
+      const N = data.nodes.length || 1;
+      let i = 0;
+      data.nodes.forEach(n => {
+        if (graph.hasNode(n.id)) return;
+
+        const t = i / N;
+        const angle = 2 * Math.PI * t * 6;      // 6 turns
+        const radius = 10 * Math.sqrt(t + 0.01);
+
+        graph.addNode(n.id, {
+          label: n.label,
+          type: n.type,
+          degree: n.degree || 0,
+          size: nodeSize(n),
+          color: nodeColor(n),
+          x: radius * Math.cos(angle),
+          y: radius * Math.sin(angle),
+        });
+        i++;
+      });
+
+      console.log("Maxwell viewer: nodes added to graph:", graph.order);
+
+      // --- Add edges, de-duplicating by unordered pair ---
+      const seenPairs = new Set();
+      let edgeCount = 0;
+      data.edges.forEach(e => {
+        const src = e.source;
+        const tgt = e.target;
+        if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
+
+        const a = src < tgt ? src + "→" + tgt : tgt + "→" + src;
+        if (seenPairs.has(a)) return;
+        seenPairs.add(a);
+
+        graph.addEdge(src, tgt, {
+          type: e.type || "link",
+        });
+        edgeCount++;
+      });
+
+      console.log("Maxwell viewer: edges added:", edgeCount);
+      setStatus(`rendering (${graph.order} nodes)`);
+
+      const renderer = new sigma.Sigma(graph, container, {
+        renderLabels: true,
+        defaultEdgeType: "line",
+        labelDensity: 0.8,
+        labelGridCellSize: 100,
+        zIndex: true,
+      });
+
+      // Tooltip
+      renderer.on("enterNode", ({ node }) => {
+        const attrs = graph.getNodeAttributes(node);
+        labelEl.textContent = attrs.label || node;
+        metaEl.textContent = `${attrs.type || "node"} · degree ${attrs.degree ?? 0}`;
+        tooltip.style.display = "block";
+      });
+
+      renderer.on("leaveNode", () => {
+        tooltip.style.display = "none";
+      });
+
+      renderer.getMouseCaptor().on("mousemove", e => {
+        if (tooltip.style.display === "block") {
+          tooltip.style.left = e.x + 12 + "px";
+          tooltip.style.top = e.y + 12 + "px";
+        }
+      });
+
+      setStatus(`ready (${graph.order} nodes, ${edgeCount} edges)`);
+      console.log("Maxwell viewer: ready");
+    }
+
+    window.addEventListener("load", () => {
+      console.log("Maxwell viewer: window load event, calling loadGraph()");
+      setStatus("initializing…");
+
+      loadGraph()
+        .then(() => {
+          console.log("Maxwell viewer: loadGraph() completed");
+        })
+        .catch(err => {
+          console.error("Maxwell viewer error:", err);
+          setStatus("ERROR – see console");
+          alert("Viewer error – see browser console for details.");
+        });
+    });
+  </script>
+</body>
+</html>
