@@ -253,7 +253,7 @@
       console.log("Maxwell viewer: edges added:", edgeCount);
       setStatus(`rendering (${graph.order} nodes)`);
 
-      const renderer = new sigma.Sigma(graph, container, {
+      const renderer = new window.Sigma(graph, container, {
         renderLabels: true,
         defaultEdgeType: "line",
         labelDensity: 0.8,
