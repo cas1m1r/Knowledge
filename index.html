@@ -163,17 +163,17 @@
 
   <div id="status-badge">Status: booting…</div>
 
-  <script>
+	<script>
   console.log("Maxwell viewer script: starting");
 
   const Graph = graphology.Graph;
   const SigmaRenderer = window.Sigma;
 
   const container = document.getElementById("sigma-container");
-  const tooltip = document.getElementById("tooltip");
-  const labelEl = tooltip.querySelector(".label");
-  const metaEl = tooltip.querySelector(".meta");
-  const statusEl = document.getElementById("status-badge");
+  const tooltip   = document.getElementById("tooltip");
+  const labelEl   = tooltip.querySelector(".label");
+  const metaEl    = tooltip.querySelector(".meta");
+  const statusEl  = document.getElementById("status-badge");
 
   function setStatus(text) {
     statusEl.textContent = "Status: " + text;
@@ -183,15 +183,15 @@
   function nodeColor(node) {
     const kind = node.kind || "";
     if (kind === "capsule") return "#ffcc66";
-    if (kind === "issue") return "#ff6b8b";
+    if (kind === "issue")   return "#ff6b8b";
     if (kind === "concept") return "#4cc3ff";
     return "#888";
   }
 
   function nodeSize(node) {
-    const base = 2;
+    const base = 1.4; // smaller so it doesn’t blob
     const d = node.degree || 0;
-    return base + Math.min(6, Math.sqrt(d) * 0.8);
+    return base + Math.min(4, Math.sqrt(d) * 0.5);
   }
 
   // tiny deterministic "random" from a string (so layout is stable)
@@ -200,132 +200,139 @@
     for (let i = 0; i < id.length; i++) {
       h = (h * 31 + id.charCodeAt(i)) | 0;
     }
-    // unsigned, scale to [0,1)
-    return (h >>> 0) / 4294967295;
+    return (h >>> 0) / 4294967295; // [0,1)
   }
 
   async function loadGraph() {
-		console.log("Maxwell viewer: fetching graph.json…");
-		setStatus("fetching graph.json…");
+    console.log("Maxwell viewer: fetching graph.json…");
+    setStatus("fetching graph.json…");
 
-		const res = await fetch("graph.json");
-		if (!res.ok) {
-		  throw new Error("HTTP " + res.status + " when fetching graph.json");
-		}
-		const data = await res.json();
-		console.log("Maxwell viewer: graph.json loaded", {
-		  nodes: data.nodes.length,
-		  edges: data.edges.length,
-		});
-		setStatus(`graph loaded (${data.nodes.length} nodes)`);
+    const res = await fetch("graph.json");
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status + " when fetching graph.json");
+    }
+    const data = await res.json();
+    console.log("Maxwell viewer: graph.json loaded", {
+      nodes: data.nodes.length,
+      edges: data.edges.length,
+    });
+    setStatus(`graph loaded (${data.nodes.length} nodes)`);
 
-		const graph = new Graph({ type: "undirected" });
+    const graph = new Graph({ type: "undirected" });
 
-		// --- Radial layout by kind (capsule / concept / issue) ---
-		const R_CAPSULE = 50;
-		const R_CONCEPT = 32;
-		const R_ISSUE = 18;
-		const R_MISC = 40;
-		const JITTER_RADIAL = 3;   // small radial jitter
-		const JITTER_ANGLE = 0.12; // small angular jitter (radians)
+    // --- Radial layout by kind (capsule / concept / issue) ---
+    const R_CAPSULE = 80;
+    const R_CONCEPT = 55;
+    const R_ISSUE   = 30;
+    const R_MISC    = 65;
+    const JITTER_RADIAL = 4;    // small radial jitter
+    const JITTER_ANGLE  = 0.18; // small angular jitter (radians)
 
-		data.nodes.forEach(n => {
-		  if (graph.hasNode(n.id)) return;
+    data.nodes.forEach(n => {
+      if (graph.hasNode(n.id)) return;
 
-		  const kind = n.type || ""; // semantic type from JSON
-		  const r0 =
-			kind === "capsule" ? R_CAPSULE :
-			kind === "concept" ? R_CONCEPT :
-			kind === "issue"   ? R_ISSUE   :
-								 R_MISC;
+      const kind = n.type || "";       // semantic type from JSON
+      const r0 =
+        kind === "capsule" ? R_CAPSULE :
+        kind === "concept" ? R_CONCEPT :
+        kind === "issue"   ? R_ISSUE   :
+                             R_MISC;
 
-		  const t = randFromId(n.id);
-		  let angle = 2 * Math.PI * t;
-		  let radius = r0 + JITTER_RADIAL * (t - 0.5);
+      const t = randFromId(n.id);
+      let angle  = 2 * Math.PI * t;
+      let radius = r0 + JITTER_RADIAL * (t - 0.5);
 
-		  // tiny extra jitter so points don't sit exactly on circles
-		  angle += (t - 0.5) * JITTER_ANGLE;
+      angle  += (t - 0.5) * JITTER_ANGLE; // angular jitter
 
-		  graph.addNode(n.id, {
-			label: n.label,
-			kind: kind,
-			degree: n.degree || 0,
-			size: nodeSize({ degree: n.degree || 0 }),
-			color: nodeColor({ kind }),
-			x: radius * Math.cos(angle),
-			y: radius * Math.sin(angle)
-		  });
-		});
+      graph.addNode(n.id, {
+        label:  n.label,
+        kind:   kind,
+        degree: n.degree || 0,
+        size:   nodeSize({ degree: n.degree || 0 }),
+        color:  nodeColor({ kind }),
+        x:      radius * Math.cos(angle),
+        y:      radius * Math.sin(angle),
+      });
+    });
 
-		console.log("Maxwell viewer: nodes added to graph:", graph.order);
+    console.log("Maxwell viewer: nodes added to graph:", graph.order);
 
-		// --- Add edges, de-duplicating by unordered pair ---
-		const seenPairs = new Set();
-		let edgeCount = 0;
-		data.edges.forEach(e => {
-		  const src = e.source;
-		  const tgt = e.target;
-		  if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
+    // --- Add edges, but only structural ones to avoid white disk ---
+    const seenPairs = new Set();
+    let edgeCount = 0;
 
-		  const key = src < tgt ? src + "→" + tgt : tgt + "→" + src;
-		  if (seenPairs.has(key)) return;
-		  seenPairs.add(key);
+    data.edges.forEach(e => {
+      const src = e.source;
+      const tgt = e.target;
+      if (!graph.hasNode(src) || !graph.hasNode(tgt)) return;
 
-		  graph.addEdge(src, tgt, {
-			type: "line"
-		  });
-		  edgeCount++;
-		});
+      const et = e.type || "";
 
-		console.log("Maxwell viewer: edges added:", edgeCount);
-		setStatus(`rendering (${graph.order} nodes)`);
+      // Keep only capsule<->concept and concept<->issue edges
+      if (et !== "capsule_concept" && et !== "concept_issue") return;
 
-		const renderer = new SigmaRenderer(graph, container, {
-		  renderLabels: true,
-		  defaultEdgeType: "line",
-		  labelDensity: 0.8,
-		  labelGridCellSize: 100,
-		  zIndex: true,
-		  edgeColor: "default",
-		  defaultEdgeColor: "rgba(255,255,255,0.05)"
-		});
+      const key = src < tgt ? src + "→" + tgt : tgt + "→" + src;
+      if (seenPairs.has(key)) return;
+      seenPairs.add(key);
 
-		// Tooltip
-		renderer.on("enterNode", ({ node }) => {
-		  const attrs = graph.getNodeAttributes(node);
-		  labelEl.textContent = attrs.label || node;
-		  metaEl.textContent = `${attrs.kind || "node"} · degree ${attrs.degree ?? 0}`;
-		  tooltip.style.display = "block";
-		});
+      graph.addEdge(src, tgt, {
+        type: "line"
+      });
+      edgeCount++;
+    });
 
-		renderer.on("leaveNode", () => {
-		  tooltip.style.display = "none";
-		});
+    console.log("Maxwell viewer: edges added (filtered):", edgeCount);
+    setStatus(`rendering (${graph.order} nodes)`);
 
-		renderer.getMouseCaptor().on("mousemove", e => {
-		  if (tooltip.style.display === "block") {
-			tooltip.style.left = e.x + 12 + "px";
-			tooltip.style.top = e.y + 12 + "px";
-		  }
-		});
+    const renderer = new SigmaRenderer(graph, container, {
+      renderLabels: true,
+      defaultEdgeType: "line",
+      labelDensity: 0.8,
+      labelGridCellSize: 100,
+      zIndex: true,
+      edgeColor: "default",
+      defaultEdgeColor: "rgba(255,255,255,0.03)",  // very light
+      minCameraRatio: 0.02,
+      maxCameraRatio: 20
+    });
 
-		setStatus(`ready (${graph.order} nodes, ${edgeCount} edges)`);
-		console.log("Maxwell viewer: ready");
-	  }
+    // Tooltip
+    renderer.on("enterNode", ({ node }) => {
+      const attrs = graph.getNodeAttributes(node);
+      labelEl.textContent = attrs.label || node;
+      metaEl.textContent  = `${attrs.kind || "node"} · degree ${attrs.degree ?? 0}`;
+      tooltip.style.display = "block";
+    });
 
-	  window.addEventListener("load", () => {
-		console.log("Maxwell viewer: window load event, calling loadGraph()");
-		setStatus("initializing…");
+    renderer.on("leaveNode", () => {
+      tooltip.style.display = "none";
+    });
 
-		loadGraph()
-		  .then(() => console.log("Maxwell viewer: loadGraph() completed"))
-		  .catch(err => {
-			console.error("Maxwell viewer error:", err);
-			setStatus("ERROR – see console");
-			alert("Viewer error – see browser console for details.");
-		  });
-	  });
-	</script>
+    renderer.getMouseCaptor().on("mousemove", e => {
+      if (tooltip.style.display === "block") {
+        tooltip.style.left = e.x + 12 + "px";
+        tooltip.style.top  = e.y + 12 + "px";
+      }
+    });
+
+    setStatus(`ready (${graph.order} nodes, ${edgeCount} edges)`);
+    console.log("Maxwell viewer: ready");
+  }
+
+  window.addEventListener("load", () => {
+    console.log("Maxwell viewer: window load event, calling loadGraph()");
+    setStatus("initializing…");
+
+    loadGraph()
+      .then(() => console.log("Maxwell viewer: loadGraph() completed"))
+      .catch(err => {
+        console.error("Maxwell viewer error:", err);
+        setStatus("ERROR – see console");
+        alert("Viewer error – see browser console for details.");
+      });
+  });
+</script>
+
 
 </body>
 </html>
