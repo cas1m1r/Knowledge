@@ -167,7 +167,9 @@
     console.log("Maxwell viewer script: starting");
 
     const Graph = graphology.Graph;
-    const Sigma = window.Sigma;
+
+    // ✔ FIX: avoid redeclaring global Sigma
+    const SigmaRenderer = window.Sigma;
 
     const container = document.getElementById("sigma-container");
     const tooltip = document.getElementById("tooltip");
@@ -179,8 +181,6 @@
       statusEl.textContent = "Status: " + text;
     }
 
-    // We use node.kind for semantic type (capsule/concept/issue),
-    // NOT node.type, because Sigma reserves node.type for render programs.
     function nodeColor(node) {
       const kind = node.kind || "";
       if (kind === "capsule") return "#ffcc66";
@@ -200,9 +200,8 @@
       setStatus("fetching graph.json…");
 
       const res = await fetch("graph.json");
-      if (!res.ok) {
-        throw new Error("HTTP " + res.status + " when fetching graph.json");
-      }
+      if (!res.ok) throw new Error("HTTP " + res.status + " when fetching graph.json");
+
       const data = await res.json();
       console.log("Maxwell viewer: graph.json loaded", {
         nodes: data.nodes.length,
@@ -212,36 +211,33 @@
 
       const graph = new Graph({ type: "undirected" });
 
-      // --- Add nodes with a simple spiral layout ---
       const N = data.nodes.length || 1;
       let i = 0;
+
       data.nodes.forEach(n => {
         if (graph.hasNode(n.id)) return;
 
         const t = i / N;
-        const angle = 2 * Math.PI * t * 6;      // 6 turns
+        const angle = 2 * Math.PI * t * 6;
         const radius = 10 * Math.sqrt(t + 0.01);
 
-        const kind = n.type || "";  // semantic type from graph.json
+        const kind = n.type || "";
 
         graph.addNode(n.id, {
           label: n.label,
-          kind: kind,               // store as 'kind', not 'type'
+          kind: kind,
           degree: n.degree || 0,
           size: nodeSize({ degree: n.degree || 0 }),
           color: nodeColor({ kind }),
           x: radius * Math.cos(angle),
           y: radius * Math.sin(angle)
-          // IMPORTANT: do NOT set node.type here
         });
         i++;
       });
 
-      console.log("Maxwell viewer: nodes added to graph:", graph.order);
-
-      // --- Add edges, de-duplicating by unordered pair ---
       const seenPairs = new Set();
       let edgeCount = 0;
+
       data.edges.forEach(e => {
         const src = e.source;
         const tgt = e.target;
@@ -251,16 +247,15 @@
         if (seenPairs.has(a)) return;
         seenPairs.add(a);
 
-        graph.addEdge(src, tgt, {
-          type: "line"   // explicit edge render program
-        });
+        graph.addEdge(src, tgt, { type: "line" });
         edgeCount++;
       });
 
       console.log("Maxwell viewer: edges added:", edgeCount);
       setStatus(`rendering (${graph.order} nodes)`);
 
-      const renderer = new Sigma(graph, container, {
+      // ✔ FIX APPLIED HERE
+      const renderer = new SigmaRenderer(graph, container, {
         renderLabels: true,
         defaultEdgeType: "line",
         labelDensity: 0.8,
@@ -268,7 +263,6 @@
         zIndex: true
       });
 
-      // Tooltip
       renderer.on("enterNode", ({ node }) => {
         const attrs = graph.getNodeAttributes(node);
         labelEl.textContent = attrs.label || node;
@@ -296,13 +290,11 @@
       setStatus("initializing…");
 
       loadGraph()
-        .then(() => {
-          console.log("Maxwell viewer: loadGraph() completed");
-        })
+        .then(() => console.log("Maxwell viewer: loadGraph() completed"))
         .catch(err => {
           console.error("Maxwell viewer error:", err);
           setStatus("ERROR – see console");
-          alert("Viewer error – see browser console for details.");
+          alert("Viewer error – see console");
         });
     });
   </script>
